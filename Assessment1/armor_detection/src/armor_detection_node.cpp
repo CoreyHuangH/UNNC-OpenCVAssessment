@@ -30,8 +30,23 @@ public:
             std::string image_path = image_folder_ + "/" + image_list_[current_image_index_];
             cv::Mat original_image = cv::imread(image_path);
 
+            // 设置仿射变换的旋转角度
+            double rotation_angle = 30.0; // 统一的旋转角度，可以根据需求调整
+
+            // 构造仿射变换矩阵
+            cv::Point2f center(original_image.cols / 2.0, original_image.rows / 2.0);
+            cv::Mat rotation_matrix = cv::getRotationMatrix2D(center, rotation_angle, 1.0);
+
+            // 进行仿射变换
+            cv::Mat rotated_image;
+            cv::warpAffine(original_image, rotated_image, rotation_matrix, original_image.size());
+
             // 装甲板灯带识别和仿射变换
-            cv::Mat processed_image = processImage(original_image);
+            cv::Mat processed_image = processImage(rotated_image);
+
+            // 显示处理后的图像
+            cv::imshow("Processed Image", processed_image);
+            cv::waitKey(0); // 等待按键
 
             // 保存处理后的图像
             std::string output_image_path = image_folder_ + "/output_" + image_list_[current_image_index_];
@@ -72,6 +87,16 @@ public:
         return image_list;
     }
 
+    // 旋转图像
+    cv::Mat rotateImage(const cv::Mat &image, double angle)
+    {
+        cv::Point2f center(image.cols / 2.0, image.rows / 2.0);
+        cv::Mat rotation_matrix = cv::getRotationMatrix2D(center, angle, 1.0);
+        cv::Mat rotated_image;
+        cv::warpAffine(image, rotated_image, rotation_matrix, image.size());
+        return rotated_image;
+    }
+
     // 装甲板灯带识别和仿射变换
     cv::Mat processImage(const cv::Mat &original_image)
     {
@@ -88,14 +113,27 @@ public:
         cv::inRange(hsv_image, lower_red, upper_red, binary_image);
 
         // 对二值图像进行形态学操作，以去除噪音和连接装甲板区域
-        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(10, 10));
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
         cv::morphologyEx(binary_image, binary_image, cv::MORPH_CLOSE, kernel);
 
         // 再进行开运算，去除边缘的噪点
         cv::morphologyEx(binary_image, binary_image, cv::MORPH_OPEN, kernel);
 
-        // 高斯滤波
-        cv::GaussianBlur(binary_image, binary_image, cv::Size(17, 17), 0);
+        cv::GaussianBlur(binary_image, binary_image, cv::Size(7, 7), 0); // 调整高斯滤波内核大小
+
+        // 去除小的连通区域
+        // cv::Mat labels, stats, centroids;
+        // int num_labels = cv::connectedComponentsWithStats(binary_image, labels, stats, centroids);
+        // for (int i = 1; i < num_labels; ++i)
+        // {
+        //     int area = stats.at<int>(i, cv::CC_STAT_AREA);
+        //     if (area < 100) // 根据需求调整最小连通区域的面积阈值
+        //     {
+        //         cv::Mat mask = (labels == i);
+        //         binary_image.setTo(0, mask);
+        //     }
+        // }
+
 
         // 寻找轮廓
         std::vector<std::vector<cv::Point>> contours;
@@ -103,23 +141,29 @@ public:
 
         // 画出轮廓和扩大的矩形
         cv::Mat result_image = original_image.clone();
+        int max_area = 11300;               // 根据需求调整最大装甲板面积阈值
+        int min_area = 2000;                // 根据需求调整最小装甲板面积阈值
+        std::vector<cv::Rect> armor_rects; // 用于保存装甲板矩形框
+
         for (const auto &contour : contours)
         {
             // 计算外接矩形
             cv::Rect bounding_rect = cv::boundingRect(contour);
 
-            // 扩大矩形
-            int expansion_size = 10; // 根据需求调整扩大的大小
-            bounding_rect.x -= expansion_size;
-            bounding_rect.y -= expansion_size;
-            bounding_rect.width += 2 * expansion_size;
-            bounding_rect.height += 2 * expansion_size;
-
-            // 画出扩大后的矩形
-            cv::rectangle(result_image, bounding_rect, cv::Scalar(0, 255, 0), 2);
+            // 判断矩形面积是否小于最大面积阈值
+            int rect_area = bounding_rect.width * bounding_rect.height;
+            if (rect_area > min_area && rect_area < max_area)
+            {
+                // 是装甲板，保存矩形框
+                armor_rects.push_back(bounding_rect);
+            }
         }
 
-        // 你可以在这里根据实际需求判断是否是装甲板，比如根据矩形的面积、长宽比等
+        // 绘制保留的装甲板矩形框
+        for (const auto &rect : armor_rects)
+        {
+            cv::rectangle(result_image, rect, cv::Scalar(0, 255, 0), 2);
+        }
 
         return result_image;
     }
